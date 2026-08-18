@@ -1,0 +1,21 @@
+id = "local.mermaid-preview"
+name = "Mermaid Preview"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Render the latest Mermaid block from a Herdr pane in a reusable Unicode preview split."
+platforms = ["macos", "linux"]
+
+[[build]]
+command = ["npm", "ci", "--ignore-scripts"]
+
+[[panes]]
+id = "viewer"
+title = "Mermaid preview"
+placement = "split"
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/src/viewer.js\""]
+
+[[actions]]
+id = "open"
+title = "Mermaid: preview latest diagram"
+contexts = ["pane"]
+command = ["node", "src/action.js"]
