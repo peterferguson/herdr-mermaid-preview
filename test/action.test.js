@@ -136,6 +136,28 @@ test("does not preview an incomplete block that is still streaming", async () =>
   assert.doesNotMatch(invocations, /plugin pane open/);
 });
 
+test("does not preview an unterminated rendered Mermaid block", async () => {
+  const { calls, result } = await runAction({
+    scrollbackText: "  mermaid\n  sequenceDiagram\n    participant A as Request A",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /latest Mermaid block is empty or incomplete/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
+test("reports when recent output contains no Mermaid block", async () => {
+  const { calls, result } = await runAction({
+    scrollbackText: "There is no diagram in this response.\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /no Mermaid diagram found in recent pane output/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
 test("reports malformed Mermaid before opening a preview pane", async () => {
   const { calls, result } = await runAction({
     scrollbackText: "  mermaid\n  not-a-diagram\n\n",

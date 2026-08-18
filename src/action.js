@@ -41,7 +41,7 @@ function dedent(lines) {
   return lines.map((line) => line.slice(amount));
 }
 
-function latestRenderedMermaid(scrollback) {
+function extractLatestMermaidSource(scrollback) {
   const lines = stripAnsi(scrollback).replaceAll("\r\n", "\n").split("\n");
   let latestMarker = -1;
   let latestComplete;
@@ -73,11 +73,15 @@ function latestRenderedMermaid(scrollback) {
     if (trimmed.toLowerCase() !== "mermaid") continue;
     latestMarker = index;
     const body = [];
+    let terminated = false;
     for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-      if (!lines[cursor].trim()) break;
+      if (!lines[cursor].trim()) {
+        terminated = true;
+        break;
+      }
       body.push(lines[cursor]);
     }
-    if (body.length) latestComplete = { body, marker: latestMarker };
+    if (terminated && body.length) latestComplete = { body, marker: latestMarker };
   }
 
   if (!latestComplete) {
@@ -144,7 +148,7 @@ function main() {
     ],
     { raw: true },
   );
-  const mermaid = latestRenderedMermaid(scrollback);
+  const mermaid = extractLatestMermaidSource(scrollback);
   const diagramBytes = Buffer.byteLength(mermaid, "utf8");
   if (diagramBytes > MAX_DIAGRAM_BYTES) {
     throw new Error(
