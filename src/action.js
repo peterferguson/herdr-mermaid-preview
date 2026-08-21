@@ -1,10 +1,16 @@
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { renderDiagram } from "./render.js";
+import { extractLatestDelimitedSources } from "./extract.js";
+import { latexFormat } from "./formats/latex.js";
+import { mermaidFormat } from "./formats/mermaid.js";
 
 const PLUGIN_ID = "local.mermaid-preview";
-const MAX_DIAGRAM_BYTES = 65_536;
+const MAX_SOURCE_BYTES = 65_536;
+const formats = new Map([
+  [latexFormat.id, latexFormat],
+  [mermaidFormat.id, mermaidFormat],
+]);
 
 function runHerdr(args, { raw = false } = {}) {
   const executable = process.env.HERDR_BIN_PATH || "herdr";
@@ -27,74 +33,6 @@ function context() {
   } catch {
     return {};
   }
-}
-
-function stripAnsi(text) {
-  return text.replace(/\u001b(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001b\\))/g, "");
-}
-
-function dedent(lines) {
-  const indents = lines
-    .filter((line) => line.trim())
-    .map((line) => line.match(/^\s*/)?.[0].length ?? 0);
-  const amount = indents.length ? Math.min(...indents) : 0;
-  return lines.map((line) => line.slice(amount));
-}
-
-function extractLatestMermaidSource(scrollback) {
-  const lines = stripAnsi(scrollback).replaceAll("\r\n", "\n").split("\n");
-  let latestMarker = -1;
-  let latestComplete;
-  for (let index = 0; index < lines.length; index += 1) {
-    const trimmed = lines[index].trim();
-    const fence = trimmed.match(/^(`{3,}|~{3,})\s*mermaid(?:\s+.*)?$/i)?.[1];
-    if (fence) {
-      latestMarker = index;
-      const body = [];
-      let closed = false;
-      for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-        const closing = lines[cursor].trim();
-        if (
-          closing.length >= fence.length &&
-          [...closing].every((character) => character === fence[0])
-        ) {
-          closed = true;
-          index = cursor;
-          break;
-        }
-        body.push(lines[cursor]);
-      }
-      if (closed && body.some((line) => line.trim())) {
-        latestComplete = { body, marker: latestMarker };
-      }
-      continue;
-    }
-
-    if (trimmed.toLowerCase() !== "mermaid") continue;
-    latestMarker = index;
-    const body = [];
-    let terminated = false;
-    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
-      if (!lines[cursor].trim()) {
-        terminated = true;
-        break;
-      }
-      body.push(lines[cursor]);
-    }
-    if (terminated && body.length) latestComplete = { body, marker: latestMarker };
-  }
-
-  if (!latestComplete) {
-    throw new Error(
-      latestMarker < 0
-        ? "no Mermaid diagram found in recent pane output"
-        : "the latest Mermaid block is empty or incomplete",
-    );
-  }
-  if (latestComplete.marker !== latestMarker) {
-    throw new Error("the latest Mermaid block is empty or incomplete");
-  }
-  return `${dedent(latestComplete.body).join("\n").trimEnd()}\n`;
 }
 
 function unwrapPaneId(response) {
@@ -128,6 +66,9 @@ function writePrivateFile(filePath, contents) {
 }
 
 function main() {
+  const formatId = process.argv[2] || "mermaid";
+  const format = formats.get(formatId);
+  if (!format) throw new Error(`unknown preview format: ${formatId}`);
   const ctx = context();
   const sourcePaneId = ctx.focused_pane_id || process.env.HERDR_PANE_ID;
   const cwd = ctx.focused_pane_cwd || ctx.workspace_cwd || process.cwd();
@@ -148,14 +89,17 @@ function main() {
     ],
     { raw: true },
   );
-  const mermaid = extractLatestMermaidSource(scrollback);
-  const diagramBytes = Buffer.byteLength(mermaid, "utf8");
-  if (diagramBytes > MAX_DIAGRAM_BYTES) {
+  const sources = extractLatestDelimitedSources(scrollback, format);
+  const sourceBytes = sources.reduce(
+    (total, source) => total + Buffer.byteLength(source, "utf8"),
+    0,
+  );
+  if (sourceBytes > MAX_SOURCE_BYTES) {
     throw new Error(
-      `the latest Mermaid block is ${diagramBytes} bytes and exceeds the ${MAX_DIAGRAM_BYTES} byte limit`,
+      `the latest ${format.displayName} message contains ${sourceBytes} bytes and exceeds the ${MAX_SOURCE_BYTES} byte limit`,
     );
   }
-  const rendered = renderDiagram(mermaid);
+  const rendered = format.render(sources);
   const stateRoot = process.env.HERDR_PLUGIN_STATE_DIR;
   if (!stateRoot) throw new Error("HERDR_PLUGIN_STATE_DIR is not available");
   const previewDirectory = path.join(
@@ -164,14 +108,18 @@ function main() {
     sourcePaneId.replaceAll(/[^a-zA-Z0-9_-]/g, "_"),
   );
   mkdirSync(previewDirectory, { recursive: true, mode: 0o700 });
-  const diagramPath = path.join(previewDirectory, "diagram.mmd");
-  writePrivateFile(path.join(previewDirectory, "diagram.txt"), rendered.text);
-  writePrivateFile(diagramPath, mermaid);
-  const recordPath = path.join(previewDirectory, "preview.json");
+  const sourcePath = path.join(previewDirectory, format.sourceFileName);
+  const textPath = path.join(
+    previewDirectory,
+    `${path.basename(format.sourceFileName, path.extname(format.sourceFileName))}.txt`,
+  );
+  writePrivateFile(textPath, rendered.text);
+  writePrivateFile(sourcePath, sources.at(-1));
+  const recordPath = path.join(previewDirectory, format.recordFileName);
   const existingPreviewPaneId = reusablePreviewPane(recordPath);
   if (existingPreviewPaneId) {
     runHerdr(["plugin", "pane", "focus", existingPreviewPaneId]);
-    console.log(`Updated Mermaid preview in ${existingPreviewPaneId}`);
+    console.log(`Updated ${format.displayName} preview in ${existingPreviewPaneId}`);
     return;
   }
 
@@ -182,7 +130,7 @@ function main() {
     "--plugin",
     PLUGIN_ID,
     "--entrypoint",
-    "viewer",
+    format.viewerEntrypoint,
     "--placement",
     "split",
     "--target-pane",
@@ -192,7 +140,7 @@ function main() {
     "--cwd",
     cwd,
     "--env",
-    `MERMAID_PREVIEW_FILE=${diagramPath}`,
+    `RESPONSE_PREVIEW_FILE=${sourcePath}`,
     "--focus",
   ]);
   const previewPaneId = unwrapPaneId(opened);
@@ -201,16 +149,23 @@ function main() {
     recordPath,
     `${JSON.stringify({ previewPaneId, sourcePaneId })}\n`,
   );
-  console.log(`Opened Mermaid preview in ${previewPaneId}`);
+  console.log(`Opened ${format.displayName} preview in ${previewPaneId}`);
 }
 
 try {
   main();
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
+  const format = formats.get(process.argv[2] || "mermaid");
   try {
-    runHerdr(["notification", "show", "Mermaid preview failed", "--body", message]);
+    runHerdr([
+      "notification",
+      "show",
+      `${format?.displayName ?? "Response"} preview failed`,
+      "--body",
+      message,
+    ]);
   } catch {}
-  console.error(`mermaid-preview: ${message}`);
+  console.error(`response-preview: ${message}`);
   process.exitCode = 1;
 }

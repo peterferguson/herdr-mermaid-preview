@@ -1,12 +1,15 @@
 id = "local.mermaid-preview"
-name = "Mermaid Preview"
-version = "0.1.0"
+name = "Response Preview"
+version = "0.2.0"
 min_herdr_version = "0.8.0"
-description = "Render the latest Mermaid block from a Herdr pane in a reusable Unicode preview split."
+description = "Render Mermaid and LaTeX blocks from recent Herdr messages in reusable Unicode preview splits."
 platforms = ["macos", "linux"]
 
 [[build]]
 command = ["npm", "ci", "--ignore-scripts"]
+
+[[build]]
+command = ["npm", "run", "build"]
 
 [[panes]]
 id = "viewer"
@@ -14,8 +17,20 @@ title = "Mermaid preview"
 placement = "split"
 command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/src/viewer.js\""]
 
+[[panes]]
+id = "latex-viewer"
+title = "LaTeX preview"
+placement = "split"
+command = ["sh", "-c", "exec node \"$HERDR_PLUGIN_ROOT/src/viewer.js\""]
+
 [[actions]]
 id = "open"
-title = "Mermaid: preview latest diagram"
+title = "Preview Mermaid from latest message"
 contexts = ["pane"]
-command = ["node", "src/action.js"]
+command = ["node", "src/action.js", "mermaid"]
+
+[[actions]]
+id = "latex"
+title = "Preview LaTeX from latest message"
+contexts = ["pane"]
+command = ["node", "src/action.js", "latex"]

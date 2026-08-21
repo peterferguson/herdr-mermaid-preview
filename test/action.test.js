@@ -17,7 +17,11 @@ const scrollback = `
   Each caller hits a different flavour of it.
 `;
 
-async function runAction({ existingPreviewPaneId, scrollbackText = scrollback } = {}) {
+async function runAction({
+  existingPreviewPaneId,
+  format = "mermaid",
+  scrollbackText = scrollback,
+} = {}) {
   const temp = await mkdtemp(path.join(os.tmpdir(), "herdr-mermaid-preview-"));
   const state = path.join(temp, "state");
   const calls = path.join(temp, "calls.jsonl");
@@ -45,12 +49,12 @@ fi
   if (existingPreviewPaneId) {
     await mkdir(previewDirectory, { recursive: true });
     await writeFile(
-      path.join(previewDirectory, "preview.json"),
+      path.join(previewDirectory, format === "mermaid" ? "preview.json" : `${format}-preview.json`),
       `${JSON.stringify({ previewPaneId: existingPreviewPaneId, sourcePaneId: "w42:p3K" })}\n`,
     );
   }
 
-  const result = spawnSync(process.execPath, ["src/action.js"], {
+  const result = spawnSync(process.execPath, ["src/action.js", format], {
     cwd: path.resolve(import.meta.dirname, ".."),
     encoding: "utf8",
     env: {
@@ -71,6 +75,60 @@ fi
   return { calls, previewDirectory, result };
 }
 
+test("renders display LaTeX from the latest matching message", async () => {
+  const { calls, previewDirectory, result } = await runAction({
+    format: "latex",
+    scrollbackText: `
+› explain the equation
+
+  $$
+  E = mc^2
+  $$
+
+› next task
+`,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    await readFile(path.join(previewDirectory, "formula.tex"), "utf8"),
+    "E = mc^2\n",
+  );
+  const preview = await readFile(path.join(previewDirectory, "formula.txt"), "utf8");
+  assert.match(preview, /²/);
+  assert.doesNotMatch(preview, /mc\^2/);
+  const invocations = await readFile(calls, "utf8");
+  assert.match(invocations, /plugin pane open .*--entrypoint latex-viewer/);
+  assert.match(invocations, /RESPONSE_PREVIEW_FILE=.*formula\.tex/);
+});
+
+test("renders every LaTeX block from the latest matching message", async () => {
+  const { previewDirectory, result } = await runAction({
+    format: "latex",
+    scrollbackText: `
+❯ old equation
+$$ E = old^2 $$
+
+› current equations
+\\[
+\\alpha + \\beta
+\\]
+
+$$ \\sum_{i=1}^{n} x_i $$
+
+❯ next task
+`,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const preview = await readFile(path.join(previewDirectory, "formula.txt"), "utf8");
+  assert.match(preview, /^Formula 1 of 2$/m);
+  assert.match(preview, /^Formula 2 of 2$/m);
+  assert.match(preview, /α \+ β/);
+  assert.match(preview, /∑/);
+  assert.doesNotMatch(preview, /old/);
+});
+
 test("opens a targeted preview for the latest rendered Mermaid block", async () => {
   const { calls, previewDirectory, result } = await runAction();
 
@@ -86,6 +144,45 @@ test("opens a targeted preview for the latest rendered Mermaid block", async () 
   assert.match(invocations, /--direction right/);
 });
 
+test("renders every Mermaid block from the latest message", async () => {
+  const { previewDirectory, result } = await runAction({
+    scrollbackText: `
+❯ explain the old path
+
+  mermaid
+  flowchart LR
+      Old["Older message"] --> Stale["Do not preview"]
+
+❯ explain both current paths
+
+  The write path is asynchronous:
+
+  mermaid
+  flowchart LR
+      Request["Current request"] --> Ledger["Ledger write"]
+
+  A leaked lock amplifies retries:
+
+  mermaid
+  flowchart TD
+      Lock["Leaked lock"] --> Retry["Provider retry"]
+
+❯ next task
+`,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const preview = await readFile(path.join(previewDirectory, "diagram.txt"), "utf8");
+  assert.match(preview, /^Diagram 1 of 2$/m);
+  assert.match(preview, /^Diagram 2 of 2$/m);
+  assert.match(preview, /Current request/);
+  assert.match(preview, /Ledger write/);
+  assert.match(preview, /Leaked lock/);
+  assert.match(preview, /Provider retry/);
+  assert.doesNotMatch(preview, /Older message/);
+  assert.doesNotMatch(preview, /Do not preview/);
+});
+
 test("updates and focuses the existing preview for the source pane", async () => {
   const { calls, previewDirectory, result } = await runAction({
     existingPreviewPaneId: "w42:p8",
@@ -99,6 +196,24 @@ test("updates and focuses the existing preview for the source pane", async () =>
   const invocations = await readFile(calls, "utf8");
   assert.match(invocations, /pane get w42:p8/);
   assert.match(invocations, /plugin pane focus w42:p8/);
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
+test("reuses LaTeX previews independently from Mermaid previews", async () => {
+  const { calls, previewDirectory, result } = await runAction({
+    existingPreviewPaneId: "w42:p7",
+    format: "latex",
+    scrollbackText: "  $$ E = mc^2 $$\n",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    await readFile(path.join(previewDirectory, "formula.tex"), "utf8"),
+    "E = mc^2\n",
+  );
+  const invocations = await readFile(calls, "utf8");
+  assert.match(invocations, /pane get w42:p7/);
+  assert.match(invocations, /plugin pane focus w42:p7/);
   assert.doesNotMatch(invocations, /plugin pane open/);
 });
 
@@ -125,6 +240,22 @@ test("extracts a Mermaid fence when the agent TUI preserves fence markers", asyn
   );
 });
 
+test("extracts a LaTeX fence when the agent TUI preserves fence markers", async () => {
+  const { previewDirectory, result } = await runAction({
+    format: "latex",
+    scrollbackText: "  ```latex\n  \\frac{x^2 + 1}{x - 1}\n  ```\n",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    await readFile(path.join(previewDirectory, "formula.tex"), "utf8"),
+    "\\frac{x^2 + 1}{x - 1}\n",
+  );
+  const preview = await readFile(path.join(previewDirectory, "formula.txt"), "utf8");
+  assert.match(preview, /²/);
+  assert.doesNotMatch(preview, /\\frac/);
+});
+
 test("does not preview an incomplete block that is still streaming", async () => {
   const { calls, result } = await runAction({
     scrollbackText: "  ```mermaid\n  sequenceDiagram\n    participant A as Request A\n",
@@ -147,6 +278,18 @@ test("does not preview an unterminated rendered Mermaid block", async () => {
   assert.doesNotMatch(invocations, /plugin pane open/);
 });
 
+test("does not preview an incomplete LaTeX block that is still streaming", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText: "  $$\n  E = mc^2\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /latest LaTeX block is empty or incomplete/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
 test("reports when recent output contains no Mermaid block", async () => {
   const { calls, result } = await runAction({
     scrollbackText: "There is no diagram in this response.\n",
@@ -154,6 +297,18 @@ test("reports when recent output contains no Mermaid block", async () => {
 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /no Mermaid diagram found in recent pane output/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
+test("reports when recent output contains no LaTeX block", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText: "There is no display math in this response.\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /no LaTeX formula found in recent pane output/);
   const invocations = await readFile(calls, "utf8");
   assert.doesNotMatch(invocations, /plugin pane open/);
 });
@@ -168,4 +323,155 @@ test("reports malformed Mermaid before opening a preview pane", async () => {
   const invocations = await readFile(calls, "utf8");
   assert.doesNotMatch(invocations, /plugin pane open/);
   assert.match(invocations, /notification show Mermaid preview failed --body/);
+});
+
+test("reports malformed LaTeX before opening a preview pane", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText: "  $$\n  \\frac{x}{\n  $$\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /KaTeX parse error/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+  assert.match(invocations, /notification show LaTeX preview failed --body/);
+});
+
+test("rejects valid LaTeX that the Unicode renderer cannot represent", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText: "  $$ \\textcolor{red}{x} $$\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unicode renderer does not support \\textcolor/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
+test("renders supported LaTeX commands and matrix row separators", async () => {
+  const { previewDirectory, result } = await runAction({
+    format: "latex",
+    scrollbackText:
+      "  $$ \\mathrm{x} = \\begin{matrix}a&b\\\\c&d\\end{matrix} $$\n",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const preview = await readFile(path.join(previewDirectory, "formula.txt"), "utf8");
+  assert.match(preview, /x/);
+  assert.match(preview, /; /);
+  assert.doesNotMatch(preview, /\\(?:begin|mathrm)/);
+});
+
+test("does not confuse command names with their rendered text content", async () => {
+  const { previewDirectory, result } = await runAction({
+    format: "latex",
+    scrollbackText: "  $$ \\text{context} $$\n",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(
+    await readFile(path.join(previewDirectory, "formula.txt"), "utf8"),
+    /context/,
+  );
+});
+
+test("checks each unsupported command without cross-formula masking", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText:
+      "  $$ \\textcolor{red}{x} + \\operatorname{textcolor}(y) $$\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unicode renderer does not support \\textcolor/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
+test("rejects LaTeX environments the Unicode renderer misrepresents", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText:
+      "  $$ \\begin{array}{cc}a&b\\\\c&d\\end{array} $$\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unicode renderer does not support environment array/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
+test("rejects LaTeX commands that produce orphaned combining marks", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText: "  $$ \\widehat{x} $$\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unicode renderer produced an orphaned combining mark/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
+test("rejects misplaced combining marks regardless of preceding formula content", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText: "  $$ y \\widehat{x} $$\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unicode renderer produced an orphaned combining mark/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
+});
+
+test("ignores LaTeX comments during capability checks and Unicode rendering", async () => {
+  const { previewDirectory, result } = await runAction({
+    format: "latex",
+    scrollbackText: "  $$\n  x % \\textcolor{red}{ignored}\n  + y\n  $$\n",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const preview = await readFile(path.join(previewDirectory, "formula.txt"), "utf8");
+  assert.doesNotMatch(preview, /ignored|textcolor|%/);
+  assert.match(preview, / \+ /);
+});
+
+test("ignores paired closing delimiters inside LaTeX comments", async () => {
+  const { previewDirectory, result } = await runAction({
+    format: "latex",
+    scrollbackText: `
+  $$
+  x % discussed $$
+  + y
+  $$
+
+  \\[
+  a % discussed \\]
+  + b
+  \\]
+`,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const preview = await readFile(path.join(previewDirectory, "formula.txt"), "utf8");
+  assert.match(preview, /^Formula 1 of 2$/m);
+  assert.match(preview, /^Formula 2 of 2$/m);
+  assert.doesNotMatch(preview, /discussed/);
+  assert.equal((preview.match(/ \+ /g) ?? []).length, 2);
+});
+
+test("rejects parameterized alignment environments the renderer misrepresents", async () => {
+  const { calls, result } = await runAction({
+    format: "latex",
+    scrollbackText:
+      "  $$ \\begin{alignedat}{2}a&=b&c&=d\\\\e&=f&g&=h\\end{alignedat} $$\n",
+  });
+
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Unicode renderer does not support environment alignedat/);
+  const invocations = await readFile(calls, "utf8");
+  assert.doesNotMatch(invocations, /plugin pane open/);
 });

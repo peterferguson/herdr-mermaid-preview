@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { renderDiagram } from "../src/render.js";
 
-test("renders the generated Unicode diagram", async () => {
+test("renders a generated Unicode preview", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mermaid-viewer-"));
   const source = "flowchart LR\n  A --> B\n";
   const rendered = renderDiagram(source);
@@ -18,8 +18,8 @@ test("renders the generated Unicode diagram", async () => {
     encoding: "utf8",
     env: {
       ...process.env,
-      MERMAID_PREVIEW_FILE: path.join(directory, "diagram.mmd"),
-      MERMAID_PREVIEW_ONCE: "1",
+      RESPONSE_PREVIEW_FILE: path.join(directory, "diagram.mmd"),
+      RESPONSE_PREVIEW_ONCE: "1",
     },
   });
 

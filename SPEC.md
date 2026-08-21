@@ -1,38 +1,53 @@
-# Mermaid preview plugin specification
+# Response preview plugin specification
 
 ## Outcome
 
-A Herdr user can focus a Claude Code or Codex pane, press `prefix+m`, and see the latest complete
-Mermaid response as a Unicode diagram in a split to the right.
+A Herdr user can focus a Claude Code or Codex pane and preview every Mermaid diagram or display-LaTeX
+formula from the latest matching response in a Unicode split to the right.
 
-## Behaviour
+## Shared architecture
 
-- Read up to 2,000 recent unwrapped lines from the invoking pane.
-- Accept both a literal fenced Mermaid block and Claude Code's rendered `mermaid` label followed by
-  indented source.
-- Select the latest complete block and reject missing, incomplete, malformed, or larger-than-64-KiB
-  input without opening a pane.
-- Render locally without a browser and keep generated artifacts private in the plugin state directory.
-- Open one managed preview pane per source pane. Repeated invocation updates and focuses that pane;
-  invocation from a different source pane opens an independent preview.
-- Display the diagram as Unicode without relying on terminal image protocols.
-- Lazily discard a stale source-to-preview association when its preview pane has been closed.
+- Normalize recent pane output and split it into Claude Code (`❯`) and Codex (`›`) message ranges once.
+- Select the latest message containing a delimiter recognized by the requested format.
+- Collect blocks through an injected format adapter with `findOpeningDelimiter`, `parseBlock`, and
+  `render` responsibilities.
+- Keep Herdr reads, the 64-KiB aggregate limit, private file writes, pane opening, and pane reuse
+  independent of the selected format.
+- Keep one source-to-preview association per source pane and format.
+
+## Mermaid behaviour
+
+- Accept literal fenced Mermaid blocks and rendered standalone `mermaid` labels.
+- Select every complete block from the latest matching message without including older-message blocks.
+- Render locally as Unicode with `beautiful-mermaid`.
+- Preserve `local.mermaid-preview.open` and its existing state filenames for compatibility.
+
+## LaTeX behaviour
+
+- Accept display blocks delimited by `$$ ... $$` and `\[ ... \]`, including one-line blocks.
+- Accept literal `latex`, `tex`, and `math` fences plus rendered standalone `latex` and `tex` labels.
+- Select every complete block from the latest matching message without including older-message blocks.
+- Validate each formula with KaTeX and reject malformed or unsupported input before opening a pane.
+- Render locally as readable Unicode with `latex2unicode`.
+- Manage LaTeX source, output, and pane records independently from Mermaid for the same source pane.
 
 ## Interaction
 
-- `prefix+m`: invoke the preview action from the focused source pane.
-- `r`: redraw.
-- `q`: close the preview.
+- `prefix+m`: invoke `local.mermaid-preview.open`.
+- `prefix+l`: invoke `local.mermaid-preview.latex` when configured.
+- `r`: redraw the current preview.
+- `q`: close the current preview.
 
 ## Verification
 
-- Use a sanitized fixture matching the Mermaid output captured from the `rust-panda` Claude pane.
-- Cover first open, reuse, missing/incomplete/oversized/malformed input, literal fences, and Unicode
-  rendering.
-- Link and reload the plugin, then prove a real `prefix+m` invocation against `rust-panda`.
+- Cover parser injection and Claude/Codex message boundaries through the shared extractor.
+- Cover first open, reuse, multiple blocks, missing/incomplete/oversized/malformed input, literal fences,
+  display delimiters, format-independent pane records, and Unicode rendering.
+- Run `npm test`, `npm run check`, and `git diff --check`.
 
 ## Out of scope
 
+- Inline `$...$` and `\(...\)` extraction.
 - Inline rendering inside the agent TUI's own scrollback.
-- Browser-based Mermaid rendering or full compatibility with every Mermaid diagram type.
-- Editing Mermaid source inside the preview pane.
+- Browser, terminal-image-protocol, or pixel-perfect TeX rendering.
+- Full LaTeX document compilation or editing source inside the preview pane.

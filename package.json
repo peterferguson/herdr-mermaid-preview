@@ -1,18 +1,24 @@
 {
-  "name": "herdr-mermaid-preview",
-  "version": "0.1.0",
+  "name": "herdr-response-preview",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Preview the latest Mermaid diagram from a Herdr pane as Unicode.",
+  "description": "Preview Mermaid diagrams and LaTeX formulas from recent Herdr messages as Unicode.",
   "license": "MIT",
   "scripts": {
-    "check": "node --check src/action.js && node --check src/render.js && node --check src/viewer.js && node --check test/action.test.js && node --check test/viewer.test.js",
-    "test": "node --test"
+    "build": "esbuild scripts/latex-runtime.ts --bundle --platform=node --format=esm --target=node22 --minify --outfile=dist/latex-runtime.js",
+    "check": "npm run build && node --check src/action.js && node --check src/extract.js && node --check src/formats/latex.js && node --check src/formats/mermaid.js && node --check src/render.js && node --check src/viewer.js && node --check test/action.test.js && node --check test/extract.test.js && node --check test/viewer.test.js",
+    "test": "npm run build && node --test"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
-    "beautiful-mermaid": "1.1.3"
+    "beautiful-mermaid": "1.1.3",
+    "katex": "0.18.4",
+    "latex2unicode": "0.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
   }
 }

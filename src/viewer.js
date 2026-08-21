@@ -2,15 +2,19 @@ import { readFileSync, watch } from "node:fs";
 import path from "node:path";
 
 const ESC = "\u001b";
-const sourcePath = process.env.MERMAID_PREVIEW_FILE;
+const sourcePath = process.env.RESPONSE_PREVIEW_FILE || process.env.MERMAID_PREVIEW_FILE;
 
 if (!sourcePath) {
-  console.error("mermaid-preview: MERMAID_PREVIEW_FILE is not available");
+  console.error("response-preview: RESPONSE_PREVIEW_FILE is not available");
   process.exit(1);
 }
 
 const directory = path.dirname(sourcePath);
-const textPath = path.join(directory, "diagram.txt");
+const sourceFileName = path.basename(sourcePath);
+const textPath = path.join(
+  directory,
+  `${path.basename(sourceFileName, path.extname(sourceFileName))}.txt`,
+);
 let redrawTimer;
 
 function redraw() {
@@ -26,10 +30,15 @@ function scheduleRedraw() {
 
 redraw();
 
-if (process.env.MERMAID_PREVIEW_ONCE === "1") process.exit(0);
+if (
+  process.env.RESPONSE_PREVIEW_ONCE === "1" ||
+  process.env.MERMAID_PREVIEW_ONCE === "1"
+) {
+  process.exit(0);
+}
 
 const watcher = watch(directory, (_event, filename) => {
-  if (filename === "diagram.mmd") scheduleRedraw();
+  if (filename === sourceFileName) scheduleRedraw();
 });
 
 process.on("SIGWINCH", scheduleRedraw);
