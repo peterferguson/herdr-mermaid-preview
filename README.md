@@ -61,9 +61,11 @@ selection, delimiter scanning, aggregate size checks, pane reuse, and file handl
 adapter injects its opening-delimiter matcher, block parser, renderer, source filename, and pane
 entrypoint. Adding another format does not require copying the Herdr lifecycle.
 
-Mermaid accepts literal `mermaid` fences and Claude Code's rendered standalone `mermaid` label.
-Rendered-label blocks end at the first blank line; fenced blocks end at their closing fence. Rendering
-uses `beautiful-mermaid`.
+Mermaid accepts literal `mermaid` fences, Claude Code's rendered standalone `mermaid` label, and
+bare syntax when an agent TUI omits both delimiters. Bare syntax must begin with an exact supported
+diagram declaration such as `flowchart LR` or `sequenceDiagram`. Rendered-label and bare-syntax
+blocks end at the first blank line; fenced blocks end at their closing fence. Rendering uses
+`beautiful-mermaid`.
 
 LaTeX accepts:
 

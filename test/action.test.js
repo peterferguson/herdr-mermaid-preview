@@ -240,6 +240,40 @@ test("extracts a Mermaid fence when the agent TUI preserves fence markers", asyn
   );
 });
 
+test("extracts bare Mermaid syntax when the agent TUI omits the fence and language label", async () => {
+  const { previewDirectory, result } = await runAction({
+    scrollbackText: `
+› compare the two paths
+
+  flowchart LR
+      A["dorny paths-filter"] -->|large JSON output| B["run step"]
+      B -->|heredoc| C["changed-files.json"]
+
+  Or derive changed files locally:
+
+  flowchart TD
+      D["base SHA + head SHA"] --> E["git diff --name-only -z"]
+      E --> F["small outputs only"]
+
+  Both workflows can then consume small outputs.
+`,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(
+    await readFile(path.join(previewDirectory, "diagram.mmd"), "utf8"),
+    'flowchart TD\n    D["base SHA + head SHA"] --> E["git diff --name-only -z"]\n    E --> F["small outputs only"]\n',
+  );
+  const preview = await readFile(path.join(previewDirectory, "diagram.txt"), "utf8");
+  assert.match(preview, /^Diagram 1 of 2$/m);
+  assert.match(preview, /^Diagram 2 of 2$/m);
+  assert.match(preview, /dorny paths-filter/);
+  assert.match(preview, /changed-files\.json/);
+  assert.match(preview, /base SHA \+ head SHA/);
+  assert.match(preview, /small outputs only/);
+  assert.doesNotMatch(preview, /Both workflows can then consume/);
+});
+
 test("extracts a LaTeX fence when the agent TUI preserves fence markers", async () => {
   const { previewDirectory, result } = await runAction({
     format: "latex",

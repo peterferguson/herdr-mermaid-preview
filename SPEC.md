@@ -38,6 +38,9 @@ formula from the latest matching response in a Unicode split to the right.
 - `r`: redraw the current preview.
 - `q`: close the current preview.
 
+Mermaid extraction accepts fenced blocks, rendered `mermaid` labels, and exact bare diagram headers
+when the agent TUI omits code-block delimiters. Undelimited diagrams end at the first blank line.
+
 ## Verification
 
 - Cover parser injection and Claude/Codex message boundaries through the shared extractor.
